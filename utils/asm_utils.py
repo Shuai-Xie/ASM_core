@@ -101,9 +101,8 @@ def detect_unlabel_imgs(model, batch_unlabel_anns, device,
     todo: 并行化; CONF_THRESH 动态调节; 样本 uncertain 评级每次选出最优的一组？
     """
     model.eval()
-    batch_sa_anns = []
-    batch_gt_sl_idxs = []  # sl idxs in gt anns
-    batch_sl_ratio, batch_al_ratio = [], []
+    batch_sa_anns, batch_al_ratio = [], []
+    batch_gt_sl_idxs = []  # sl idxs in gt anns，作图显示 SL 标注时需要
     for ann in tqdm(batch_unlabel_anns):  # idx as unlabel image id
         # model 直接 out 的 boxes
         # [postprocess: box_score_thresh=0.05, box_nms_thresh=0.5]
@@ -133,9 +132,7 @@ def detect_unlabel_imgs(model, batch_unlabel_anns, device,
         batch_sa_anns.append(ann)
 
         # 记录 单张图像 SL/AL anns 占比
-        sl_ratio = len(gt_sl_idxs) / len(sa_labels)
-        batch_sl_ratio.append(sl_ratio)
-        batch_al_ratio.append(1 - sl_ratio)
+        batch_al_ratio.append(1 - len(gt_sl_idxs) / len(sa_labels))  # sl_ratio + al_ratio = 1
         batch_gt_sl_idxs.append(gt_sl_idxs)
 
-    return batch_sa_anns, batch_sl_ratio, batch_al_ratio, batch_gt_sl_idxs
+    return batch_sa_anns, batch_al_ratio, batch_gt_sl_idxs

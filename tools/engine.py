@@ -49,7 +49,7 @@ def train_one_epoch(model, optimizer, dataloader, device, epoch, print_freq,
 
         loss_value = losses_reduced.item()
         if cnt % print_freq == 0:  # 可以 每 10 iter 记录一下 loss
-            writer.add_scalar('ASM/loss', losses_reduced.item(), global_step=begin_step + cnt)
+            writer.add_scalar('Train/loss', losses_reduced.item(), global_step=begin_step + cnt)
         cnt += 1
 
         if not math.isfinite(loss_value):

@@ -14,11 +14,71 @@ Active Sample Learning on VOC detection dataset.
 - [x] **img-level -> box-level**. 精确到筛查每张图像上的 box，引入 `certian`/`uncertain` boxes 比较机制
 - [x] **batch import unlabel data**. 设置 `K`，每个 epoch，`detect_unlabel_imgs()` 从 unlabel data 中取 `K` 个使用当前 model 进行检测，更新 gt_anns 得到 sa_anns，模拟完成一次 human-machine cooperated anns，更新算法见 `utils/asm_utils.py` 
 - [x] **SL/AL ann_ratio/img**. 显示每张图像 SL/AL anns 标注数量平均占比，反应模型 SL 性能变化
-- [ ] **most hard samples**. 使用 `AL ann_ratio` 作为较困难图像的衡量方式，在 update training dataset 是优先选择最 hard 的样本 
-- [ ] **update eval dataset**. 随着模型新数据引入，原始的 eval data 已不能反应模型在最新数据上的性能，需要类似 Continual Learning 的方式更新 eval data
+- [x] **most hard samples**. 使用 `AL ann_ratio` 作为较困难图像的衡量方式，在 update training dataset 是优先选择最 hard 的样本 
+- [ ] **update eval dataset**. 随着模型新数据引入，原始 eval data 已不能反应模型在最新数据上的性能，需要类似 Continual Learning 的方式更新 eval data
+- [ ] 如何在更少的 initial data 上 train model，进一步得到标注成本更低的 asm
 
-### Harder Question
-如何在更少的 initial data 上 train model，进一步得到标注成本更低的 asm
+
+### import informative samples
+
+#### v1
+
+Don't change the label data, and incrementally import `K` SA_anns unlabel data
+
+1. select `K` samples from unlabel data
+2. detect on `K` unlabel samples and generate `K` SA_anns
+3. randomly select `K` samples from label data
+4. train on the new dataset: `K` SA_anns + `K` label anns
+5. goto 1, until `ap_shift < ap_shift_thre`
+
+
+#### v1+
+
+Expand the label data with SA_anns every batch so that we can **choose more just SA annotated unlabel data in next batch**. 
+
+- **expanding label data:** `label_anns += SA_anns`
+- update the step 3 of **v1**
+
+
+#### topK v1
+
+`AL ann_ratio` is a good indicator of the informative images.
+- low. more objects are annotated by the model. 
+- high. more objects are annotated by the human. (**what we need most**) 
+
+`sa_anns`,`sa_ratios`: store the `AL ann_ratio` and `SA_anns` of the already detected unlabel data in previous batches.
+
+After the detection of current batch
+
+```py
+# 当前所有已经检测的 unlabel data 的 sa_anns, AL ann_ratio
+sa_anns += batch_sa_anns
+sa_ratios += batch_al_ratio
+
+# 排序 AL ann_ratio
+cer_idxs = np.argsort(sa_ratios)  # 默认从小到大，从 certain -> uncertain
+
+# 选择 top K certain/uncertain
+
+topK_cer_anns = [sa_anns[i] for i in cer_idxs[:args.K]]  # top K certain
+topK_uncer_anns = [sa_anns[i] for i in cer_idxs[-args.K:]]  # top K uncertain
+
+# 随机选 K 个 label anns
+random_label_anns = random.sample(label_anns, args.K)
+
+# 形成新的 trianset
+asm_train_anns = topK_uncer_anns + random_label_anns
+
+# 使用 top K certian anns 补充 label_anns，下轮再从中随机选择
+label_anns += topK_cer_anns
+```
+
+Flaws:
+- `sa_anns` and `sa_ratios` of previous batches are not updated, so the **`topK` isn't the real `topK` of current model**. 
+
+#### topK v2
+top K uncertain 存入 sa_anns，而不存储所有 batch anns
+
 
 ## Code Structure
 

@@ -21,7 +21,7 @@ Active Sample Learning on VOC detection dataset.
 如何在更少的 initial data 上 train model，进一步得到标注成本更低的 asm
 
 
-## import informative samples
+## Import the SL/AL samples more informatively
 
 ### v1
 

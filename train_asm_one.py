@@ -65,7 +65,7 @@ def update_asm_dataloader(tag, batch_idx, writer, epoch):
     sa_anns += batch_sa_anns
     sa_ratios += batch_al_ratio
 
-    cer_idxs = np.argsort(sa_ratios)
+    cer_idxs = np.argsort(sa_ratios)  # 默认从小到大，小的 SL ratio 高，certain
 
     topK_cer_anns = [sa_anns[i] for i in cer_idxs[:args.K]]  # al ratio 低的
     topK_uncer_anns = [sa_anns[i] for i in cer_idxs[-args.K:]]  # al ratio 高的

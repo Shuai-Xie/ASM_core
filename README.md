@@ -18,7 +18,7 @@ Active Sample Learning on VOC detection dataset.
 - [ ] **update eval dataset**. 随着模型新数据引入，原始的 eval data 已不能反应模型在最新数据上的性能，需要类似 Continual Learning 的方式更新 eval data
 
 ### Harder Question
-如果在更少的 initial data 上 train model，进一步得到标注成本更低的 asm
+如何在更少的 initial data 上 train model，进一步得到标注成本更低的 asm
 
 ## Code Structure
 

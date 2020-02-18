@@ -47,7 +47,7 @@ def update_asm_dataloader(tag, batch_idx, writer, epoch):
     # target: sl_idxs increase, al_idxs reduce!
     print('detect on unlable data')
 
-    global label_anns, unlabel_anns, sa_anns  # 作为 global 变量，时刻更新
+    global label_anns, unlabel_anns, sa_anns, sa_ratios  # 作为 global 变量，时刻更新
 
     # 根据 batch_idx 分批次引入 unlabel samples
     # K 控制每个 epoch 引入的新样本数量
@@ -59,15 +59,26 @@ def update_asm_dataloader(tag, batch_idx, writer, epoch):
     # SL/AL anns
     batch_sa_anns, batch_sl_ratio, batch_al_ratio, _ = detect_unlabel_imgs(model, batch_unlabel_anns, device,
                                                                            args.certain_thre, args.uncertain_thre)
-    # todo: 可以选择 AL ratio 高的样本?
-    #       将 sa_anns 保存起来 下一轮 batch_detect 引入 ratio 高的?
-    #       不设 ratio thre，而选择 top 100 默认就带入了 ratio 逐渐降低的过程
+
+    # top K uncertain 样本选择，AL ratio 高的
+    # 针对全部 unlabel data 找出 top K
+    sa_anns += batch_sa_anns
+    sa_ratios += batch_al_ratio
+
+    cer_idxs = np.argsort(sa_ratios)
+
+    topK_cer_anns = [sa_anns[i] for i in cer_idxs[:args.K]]  # al ratio 低的
+    topK_uncer_anns = [sa_anns[i] for i in cer_idxs[-args.K:]]  # al ratio 高的
+
     # 从 init anns 中也选取 K 个与 sa_anns 共同组成 new trainset
     random.seed()  # 每次随机不一样
     random_label_anns = random.sample(label_anns, args.K)
-    asm_train_anns = batch_sa_anns + random_label_anns
+
+    # 形成新的 trianset
+    asm_train_anns = topK_uncer_anns + random_label_anns
     # 更新 label_anns，下一 batch 也会筛选一些 init anns 之外的样本
-    label_anns += batch_sa_anns
+    # label_anns += batch_sa_anns
+    label_anns += topK_cer_anns  # 更换样本更新方式
 
     # tensorboard SL/AL 样本 ratio 变化趋势
     writer.add_scalars('ASM/sample_ratio', {
@@ -192,7 +203,9 @@ if __name__ == '__main__':
     voc2007_anns = load_data('VOC2007', split='trainval')  # 5011
     label_anns = voc2007_anns[:1000]  # initial train
     unlabel_anns = voc2007_anns[1000:]  # incremently AL 分批实现
-    sa_anns = []
+    # record sa ratios and anns
+    sa_anns, sa_ratios = [], []
+    # eval
     eval_anns = load_data('VOC2007', split='test')  # 4592
     random.seed(1)  # 每次随机一样，增加复现性
     eval_anns = random.sample(eval_anns, 1000)

@@ -16,12 +16,14 @@ Active Sample Learning on VOC detection dataset.
 - [x] **SL/AL ann_ratio/img**. 显示每张图像 SL/AL anns 标注数量平均占比，反应模型 SL 性能变化
 - [x] **most hard samples**. 使用 `AL ann_ratio` 作为较困难图像的衡量方式，在 update training dataset 是优先选择最 hard 的样本 
 - [ ] **update eval dataset**. 随着模型新数据引入，原始 eval data 已不能反应模型在最新数据上的性能，需要类似 Continual Learning 的方式更新 eval data
-- [ ] 如何在更少的 initial data 上 train model，进一步得到标注成本更低的 asm
+
+### Harder Question
+如何在更少的 initial data 上 train model，进一步得到标注成本更低的 asm
 
 
-### import informative samples
+## import informative samples
 
-#### v1
+### v1
 
 Don't change the label data, and incrementally import `K` SA_anns unlabel data
 
@@ -32,7 +34,7 @@ Don't change the label data, and incrementally import `K` SA_anns unlabel data
 5. goto 1, until `ap_shift < ap_shift_thre`
 
 
-#### v1+
+### v1+
 
 Expand the label data with SA_anns every batch so that we can **choose more just SA annotated unlabel data in next batch**. 
 
@@ -40,7 +42,9 @@ Expand the label data with SA_anns every batch so that we can **choose more just
 - update the step 3 of **v1**
 
 
-#### topK v1
+### topK v1
+
+排序 `AL ann_ratio`，K largest 加入 uncertain, K smallest 加入 certain 并增加给 label anns
 
 `AL ann_ratio` is a good indicator of the informative images.
 - low. more objects are annotated by the model. 
@@ -73,12 +77,13 @@ asm_train_anns = topK_uncer_anns + random_label_anns
 label_anns += topK_cer_anns
 ```
 
-Flaws:
-- `sa_anns` and `sa_ratios` of previous batches are not updated, so the **`topK` isn't the real `topK` of current model**. 
+### topK v2
 
-#### topK v2
-top K uncertain 存入 sa_anns，而不存储所有 batch anns
+With the model improved, `sa_anns` and `sa_ratios` of the previous batches should be updated. 
 
+Judge certain/uncertain anns by AL ratio threshold.
+- `AL ann_ratio <= 0.3`，加入 certain 增加给 label anns
+- `AL ann_ratio >= 0.6`，加入 uncertain 并保存 pre_gt_uncer_anns 作为下轮引入 batch_unlabel_anns，实现旧的 uncertain 样本也能交给新模型检测并用于下个 batch 训练
 
 ## Code Structure
 

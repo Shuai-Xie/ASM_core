@@ -33,12 +33,10 @@ def get_learning_tag():
     return tag
 
 
-def update_asm_dataloader(tag, batch_idx, writer, epoch):
+def update_asm_dataloader(writer, epoch):
     """
     update asm_train_anns and dataloader
         可传入 eval acc 作为更新 CONF_THRESH 的依据
-    @param tag: learning tag: as, al, sl
-    @param batch_idx: 增量样本的批次 idx, 每次 K 个
     @param writer: SummaryWriter
     @param epoch: current epoch idx
     @return: data_loader with sl/al results
@@ -47,43 +45,54 @@ def update_asm_dataloader(tag, batch_idx, writer, epoch):
     # target: sl_idxs increase, al_idxs reduce!
     print('detect on unlable data')
 
-    global label_anns, unlabel_anns, sa_anns, sa_ratios  # 作为 global 变量，时刻更新
+    global label_anns, unlabel_anns, pre_gt_uncer_anns, unlabel_idx
 
-    # 根据 batch_idx 分批次引入 unlabel samples
-    # K 控制每个 epoch 引入的新样本数量
-    # todo: 判断每次引入的 sample 学习完毕? 设置 AP 阈值，逐渐增加
+    # todo: 判断每个 batch 引入的 sample 学习完毕? 设置 AP 阈值，逐渐增加
     #       引入新 anns 后，eval_anns 也要引入新的测试数据，将 batch_sa_anns 选出部分加入?
-    upper = min((batch_idx + 1) * args.K, len(unlabel_anns))
-    batch_unlabel_anns = unlabel_anns[batch_idx * args.K:upper]
+
+    # pre_gt_uncer_anns: 保存之前 batches al ratio 低的样本的 gt_anns，因为传入 detect_unlabel_imgs() 都是 gt
+    # unlabel_idx: unlabel data 中当前要使用的新数据 初始 idx，从此开始索引新数据
+    # 这样之前的老数据就能交给新模型检测，如果 ratio 还很低，会自动在下一轮模型训练时再次引入
+    # 相当于自动将需要多轮训练的数据保存加入 dataset
+    upper = min(unlabel_idx + args.K - len(pre_gt_uncer_anns), len(unlabel_anns))  # batch=K，但不是截断
+    batch_unlabel_anns = pre_gt_uncer_anns + unlabel_anns[unlabel_idx:upper]
+    unlabel_idx = upper  # 更新 unlabel_idx 到最新位置
 
     # SL/AL anns
-    batch_sa_anns, batch_sl_ratio, batch_al_ratio, _ = detect_unlabel_imgs(model, batch_unlabel_anns, device,
-                                                                           args.certain_thre, args.uncertain_thre)
+    batch_sa_anns, batch_al_ratio, _ = detect_unlabel_imgs(model, batch_unlabel_anns, device,
+                                                           args.certain_thre, args.uncertain_thre)
 
-    # top K uncertain 样本选择，AL ratio 高的
-    # 针对全部 unlabel data 找出 top K
-    sa_anns += batch_sa_anns
-    sa_ratios += batch_al_ratio
+    # 根据 al_ratio 阈值划分 cer_anns, uncer_anns
+    batch_anns_num = len(batch_al_ratio)
+    cer_anns, uncer_anns, pre_gt_uncer_anns = [], [], []  # 更新当前轮 pre_gt_uncer_anns
+    for i in range(batch_anns_num):
+        if batch_al_ratio[i] >= 0.6:  # 应该大一些更好
+            uncer_anns.append(batch_sa_anns[i])  # sa uncer
+            pre_gt_uncer_anns.append(batch_unlabel_anns[i])  # gt uncer
+        if batch_al_ratio[i] <= 0.3:
+            cer_anns.append(batch_sa_anns[i])
 
-    cer_idxs = np.argsort(sa_ratios)  # 默认从小到大，小的 SL ratio 高，certain
+    # 更新 label_anns, al_ratio 小的 cer_anns 更符合自动化标注结果
+    label_anns += cer_anns
 
-    topK_cer_anns = [sa_anns[i] for i in cer_idxs[:args.K]]  # al ratio 低的
-    topK_uncer_anns = [sa_anns[i] for i in cer_idxs[-args.K:]]  # al ratio 高的
-
-    # 从 init anns 中也选取 K 个与 sa_anns 共同组成 new trainset
+    # 更新后随机选 K 个
     random.seed()  # 每次随机不一样
-    random_label_anns = random.sample(label_anns, args.K)
+    random_label_anns = random.sample(label_anns, args.K)  # 等量选择? K 保证多一点
 
-    # 形成新的 trianset
-    asm_train_anns = topK_uncer_anns + random_label_anns
-    # 更新 label_anns，下一 batch 也会筛选一些 init anns 之外的样本
-    # label_anns += batch_sa_anns
-    label_anns += topK_cer_anns  # 更换样本更新方式
+    # 形成新的 trainset, 使用 uncer_anns 因为部分是自动标注的结果
+    asm_train_anns = uncer_anns + random_label_anns
 
-    # tensorboard SL/AL 样本 ratio 变化趋势
+    # SL/AL 样本 num 数量趋势
+    writer.add_scalars('ASM/sample_num', {
+        'SL': len(cer_anns),  # 因为有阈值设置，所以二者之和 != K
+        'AL': len(uncer_anns),
+    }, global_step=epoch)
+
+    # SL/AL 样本 ratio 变化趋势
+    al_mean_ratio = np.mean(batch_al_ratio)
     writer.add_scalars('ASM/sample_ratio', {
-        'SL': np.mean(batch_sl_ratio),
-        'AL': np.mean(batch_al_ratio),
+        'SL': 1 - al_mean_ratio,
+        'AL': al_mean_ratio,
     }, global_step=epoch)
 
     dataset = VOC_Dataset(data=asm_train_anns, split=None, transforms=get_transform(True))
@@ -99,16 +108,15 @@ def update_asm_dataloader(tag, batch_idx, writer, epoch):
 
 
 def train_model(dataloader, start_epoch, ap_shift_thre, asm=True):
-    batch_samples_idx = 0  # 从 unlabel_anns 切出 K 个样本
     if asm:
-        dataloader = update_asm_dataloader(learning_tag, batch_samples_idx, writer, epoch=start_epoch)
+        dataloader = update_asm_dataloader(writer, epoch=start_epoch)
 
     for epoch in range(start_epoch, args.num_epoches):  # epoch 要从0开始，内部有 warm_up
         # train
         train_one_epoch(model, optimizer, dataloader, device, epoch, print_freq=10,
                         writer=writer, begin_step=epoch * len(dataloader))
         # store & update lr
-        writer.add_scalar('ASM/lr', optimizer.param_groups[0]["lr"], global_step=epoch)
+        writer.add_scalar('Train/lr', optimizer.param_groups[0]["lr"], global_step=epoch)
         lr_scheduler.step()
         # eval after each train
         evals = evaluate(model, dataloader_eval, device, writer, epoch)
@@ -129,8 +137,7 @@ def train_model(dataloader, start_epoch, ap_shift_thre, asm=True):
             save_model(ckpt_path, model, epoch, optimizer)
 
             if asm:
-                batch_samples_idx += 1
-                dataloader = update_asm_dataloader(learning_tag, batch_samples_idx, writer, epoch)
+                dataloader = update_asm_dataloader(writer, epoch)
 
             if 0 < ap_shift < ap_shift_thre:  # break and save ap records
                 best_idx_in_range = ap_records[args.ap].index(max(ap_records[args.ap][-args.ap_range:]))
@@ -203,8 +210,8 @@ if __name__ == '__main__':
     voc2007_anns = load_data('VOC2007', split='trainval')  # 5011
     label_anns = voc2007_anns[:1000]  # initial train
     unlabel_anns = voc2007_anns[1000:]  # incremently AL 分批实现
-    # record sa ratios and anns
-    sa_anns, sa_ratios = [], []
+    unlabel_idx = 0
+    pre_gt_uncer_anns = []  # 更新每个 epoch 后不确定 anns
     # eval
     eval_anns = load_data('VOC2007', split='test')  # 4592
     random.seed(1)  # 每次随机一样，增加复现性

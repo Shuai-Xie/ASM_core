@@ -8,8 +8,4 @@ def sub_two_list(l1, l2):
 
 
 if __name__ == '__main__':
-    l1 = np.array([1, 2, 103, 4, 6, 8])
-    print(l1[:4])
-    l2 = np.array([3, 4, 8])
-    idx = np.argsort(l1)
-    print(l1[idx[-3:]])
+    pass

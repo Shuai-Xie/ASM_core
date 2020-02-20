@@ -2,6 +2,10 @@
 
 Active Sample Learning on VOC detection dataset.
 
+## CEAL
+
+A **Cost-Effective Active Learning (CEAL)** algorithm is able to **interactively query the human annotator or the own ConvNet model** (automatic annotations from high confidence predictions) **new labeled instances** from a pool of unlabeled data.
+
 ## Features
 
 ### model
@@ -23,7 +27,7 @@ Active Sample Learning on VOC detection dataset.
 
 ## Import the SL/AL samples more informatively
 
-### v1
+### v1. use SA anns, but not choose the top informative samples
 
 Don't change the label data, and incrementally import `K` SA_anns unlabel data
 
@@ -34,7 +38,7 @@ Don't change the label data, and incrementally import `K` SA_anns unlabel data
 5. goto 1, until `ap_shift < ap_shift_thre`
 
 
-### v1+
+### v1+. add SA_anns to label_anns, better choose K label_anns next batch
 
 Expand the label data with SA_anns every batch so that we can **choose more just SA annotated unlabel data in next batch**. 
 
@@ -42,7 +46,7 @@ Expand the label data with SA_anns every batch so that we can **choose more just
 - update the step 3 of **v1**
 
 
-### topK v1
+### topK v1 - AL ratio
 
 排序 `AL ann_ratio`，K largest 加入 uncertain, K smallest 加入 certain 并增加给 label anns
 
@@ -77,13 +81,27 @@ asm_train_anns = topK_uncer_anns + random_label_anns
 label_anns += topK_cer_anns
 ```
 
-### topK v2
+### topK v2 - AL ratio thre
 
 With the model improved, `sa_anns` and `sa_ratios` of the previous batches should be updated. 
 
 Judge certain/uncertain anns by AL ratio threshold.
 - `AL ann_ratio <= 0.3`，加入 certain 增加给 label anns
 - `AL ann_ratio >= 0.6`，加入 uncertain 并保存 pre_gt_uncer_anns 作为下轮引入 batch_unlabel_anns，实现旧的 uncertain 样本也能交给新模型检测并用于下个 batch 训练
+
+
+### topK v3 - SL score thre
+
+Judge certain/uncertain anns by SL score threshold.
+
+- `ann_ratio` can only judge the uncertainty by sl boxes number. 
+- `sl_score` can take into account the **model performance** and **gt boxes number**, which can better reflect the uncertainty of whole image.
+
+```py
+# sl_score per img
+sl_score = sum(sl_box_scores) / len(gt_boxes)
+```
+
 
 ## Code Structure
 

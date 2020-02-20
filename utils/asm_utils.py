@@ -7,8 +7,7 @@ from utils.box_utils import box_iou
 
 
 @torch.no_grad()
-def infer(model, img_path, device):
-    img = Image.open(img_path).convert('RGB')
+def infer(model, img, device):
     img_tensor = F.to_tensor(img)
     detection = model([img_tensor.to(device)])[0]
 
@@ -24,12 +23,12 @@ def keep_idxs_by(condition):
 
 def rejudge_certain_anns(boxes, labels, cer_idxs, uncer_idxs, iou_thre=0.5):
     """
-    boxes, labels: detection 全部输出结果
-    iou(certain_box, uncertain_box) 再比较其 label
-        如果 label 不同，说明 model 对该位置不确定 (top n 不确定)
-        如果 label 相同，保留 cer box 即可
-    iou_thre 判断出的 box, 执行 nms，把相对于 cer_box 的 uncertain boxes 去掉
-    iou_thre 控制着 uncertain 阈值，越低更多 certain 样本化为 uncertain，更多样本流入 AL
+    根据 uncer boxes 与 cer boxes 的 iou 和 label 进一步确定 cer box 的 uncertainty
+    @param boxes: infer output
+    @param labels: infer output
+    @param cer_idxs: certain idxs in infer output
+    @param uncer_idxs: uncertain idxs in infer output
+    @param iou_thre: 越低，cer 越容易判断为 uncer，流入 AL
     @return: 筛选过的 cer_boxes, cer_labels
     """
     keep_idxs = []
@@ -45,7 +44,7 @@ def rejudge_certain_anns(boxes, labels, cer_idxs, uncer_idxs, iou_thre=0.5):
         # >= iou_thre 的 uncertain_box 下标
         mask = torch.where(ious >= iou_thre, torch.tensor(1), torch.tensor(0)).nonzero()
         if mask.size()[0] > 0:
-            # uncertain 中有 label 不同的，cer
+            # uncertain 中有 label 不同的，说明 model 对该位置不确定 (top n 不确定)
             if cer_labels[cer_idx] not in uncer_labels[mask]:
                 certain = False
 
@@ -95,18 +94,19 @@ def update_sa_anns(boxes, labels, cer_idxs, gt_anns, iou_thre):
 
 @torch.no_grad()
 def detect_unlabel_imgs(model, batch_unlabel_anns, device,
-                        certain_thre, uncertain_thre,
+                        certain_thre=0.8, uncertain_thre=0.3,
                         judge_iou_thre=0.5, gt_iou_thre=0.8):
     """
     todo: 并行化; CONF_THRESH 动态调节; 样本 uncertain 评级每次选出最优的一组？
     """
     model.eval()
-    batch_sa_anns, batch_al_ratio = [], []
+    batch_sa_anns, batch_sl_scores = [], []
     batch_gt_sl_idxs = []  # sl idxs in gt anns，作图显示 SL 标注时需要
     for ann in tqdm(batch_unlabel_anns):  # idx as unlabel image id
         # model 直接 out 的 boxes
         # [postprocess: box_score_thresh=0.05, box_nms_thresh=0.5]
-        boxes, labels, scores = infer(model, ann['filepath'], device)  # labels is int64
+        img = Image.open(ann['filepath'])
+        boxes, labels, scores = infer(model, img, device)  # labels is int64
 
         # 分开 certain / uncertain boxes, idxs 1D tensor
         keep_idxs = keep_idxs_by(scores >= uncertain_thre)  # conf 分段
@@ -122,17 +122,22 @@ def detect_unlabel_imgs(model, batch_unlabel_anns, device,
         # 如果不存在 uncertain_idxs，直接与 gt anns 比较
         # 2.与 gt ann 比较后，再次更新 certain_idxs，相当于 human judge 结果
         gt_anns = torch.tensor(ann['boxes'], dtype=torch.float32), torch.tensor(ann['labels'])
+
         # sa_anns = gt_anns + cer_anns，即部分 GT 用 certain anns 替换
         # len(certain_idxs) = len(gt_sl_idxs)
         certain_idxs, gt_sl_idxs, sa_boxes, sa_labels = update_sa_anns(boxes, labels,
                                                                        certain_idxs, gt_anns, iou_thre=gt_iou_thre)
+
+        # 所有 cer boxes 的 scores 之和 / gt boxes num = sl_score 最大=1
+        certain_scores = scores[certain_idxs]
+        sl_score = torch.sum(certain_scores) / len(sa_labels)
+        batch_sl_scores.append(sl_score.item())
+
         # 添加 sa_ann
         ann['boxes'] = sa_boxes.numpy()  # 转 numpy
         ann['labels'] = sa_labels.numpy()
         batch_sa_anns.append(ann)
 
-        # 记录 单张图像 SL/AL anns 占比
-        batch_al_ratio.append(1 - len(gt_sl_idxs) / len(sa_labels))  # sl_ratio + al_ratio = 1
         batch_gt_sl_idxs.append(gt_sl_idxs)
 
-    return batch_sa_anns, batch_al_ratio, batch_gt_sl_idxs
+    return batch_sa_anns, batch_sl_scores, batch_gt_sl_idxs

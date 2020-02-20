@@ -50,27 +50,29 @@ def update_asm_dataloader(writer, epoch):
     # todo: 判断每个 batch 引入的 sample 学习完毕? 设置 AP 阈值，逐渐增加
     #       引入新 anns 后，eval_anns 也要引入新的测试数据，将 batch_sa_anns 选出部分加入?
 
-    # pre_gt_uncer_anns: 保存之前 batches al ratio 低的样本的 gt_anns，因为传入 detect_unlabel_imgs() 都是 gt
+    # 使用 sl_cores 衡量困难样本，更能反映模型在整张图片的得分情况
+
+    # pre_gt_uncer_anns: 保存之前 batches mean_score 低的样本的 gt_anns，因为传入 detect_unlabel_imgs() 都是 gt
     # unlabel_idx: unlabel data 中当前要使用的新数据 初始 idx，从此开始索引新数据
-    # 这样之前的老数据就能交给新模型检测，如果 ratio 还很低，会自动在下一轮模型训练时再次引入
+    # 这样之前的老数据就能交给新模型检测，如果 sl_score 还很低，会自动在下一轮模型训练时再次引入
     # 相当于自动将需要多轮训练的数据保存加入 dataset
     upper = min(unlabel_idx + args.K - len(pre_gt_uncer_anns), len(unlabel_anns))  # batch=K，但不是截断
     batch_unlabel_anns = pre_gt_uncer_anns + unlabel_anns[unlabel_idx:upper]
     unlabel_idx = upper  # 更新 unlabel_idx 到最新位置
 
     # SL/AL anns
-    batch_sa_anns, batch_al_ratio, _ = detect_unlabel_imgs(model, batch_unlabel_anns, device,
-                                                           args.certain_thre, args.uncertain_thre)
+    batch_sa_anns, batch_sl_scores, _ = detect_unlabel_imgs(model, batch_unlabel_anns, device,
+                                                            args.certain_thre, args.uncertain_thre)
 
-    # 根据 al_ratio 阈值划分 cer_anns, uncer_anns
-    batch_anns_num = len(batch_al_ratio)
+    # 根据 sl_score 阈值划分 cer_anns, uncer_anns
+    batch_anns_num = len(batch_sl_scores)
     cer_anns, uncer_anns, pre_gt_uncer_anns = [], [], []  # 更新当前轮 pre_gt_uncer_anns
     for i in range(batch_anns_num):
-        if batch_al_ratio[i] >= 0.6:  # 应该大一些更好
+        if batch_sl_scores[i] >= 0.75:  # 应该大一些更好
+            cer_anns.append(batch_sa_anns[i])
+        if batch_sl_scores[i] <= 0.5:  # 标注得分越低，越需要 AL
             uncer_anns.append(batch_sa_anns[i])  # sa uncer
             pre_gt_uncer_anns.append(batch_unlabel_anns[i])  # gt uncer
-        if batch_al_ratio[i] <= 0.3:
-            cer_anns.append(batch_sa_anns[i])
 
     # 更新 label_anns, al_ratio 小的 cer_anns 更符合自动化标注结果
     label_anns += cer_anns
@@ -85,14 +87,14 @@ def update_asm_dataloader(writer, epoch):
     # SL/AL 样本 num 数量趋势
     writer.add_scalars('ASM/sample_num', {
         'SL': len(cer_anns),  # 因为有阈值设置，所以二者之和 != K
-        'AL': len(uncer_anns),
+        'AL': len(uncer_anns),  # +K = 训练样本数量
     }, global_step=epoch)
 
     # SL/AL 样本 ratio 变化趋势
-    al_mean_ratio = np.mean(batch_al_ratio)
-    writer.add_scalars('ASM/sample_ratio', {
-        'SL': 1 - al_mean_ratio,
-        'AL': al_mean_ratio,
+    sl_mean_score = np.mean(batch_sl_scores)
+    writer.add_scalars('ASM/sl_score', {
+        'SL': sl_mean_score,
+        'AL': 1 - sl_mean_score,
     }, global_step=epoch)
 
     dataset = VOC_Dataset(data=asm_train_anns, split=None, transforms=get_transform(True))
@@ -176,10 +178,10 @@ if __name__ == '__main__':
     parser.add_argument('--enable_sl', default=True, type=bool, help='whether to use sl process')
 
     params = [
-        '--gpus', '0',
+        '--gpus', '1',
         '--backbone', 'res50',
         '--num_classes', '21',  # 20+bg
-        '--batch_size', '8',
+        '--batch_size', '4',
         '--check_step', '1',  # eval step
         # '--ckpt', 'output/res50_sa/res50_epoch_5.pth',
     ]

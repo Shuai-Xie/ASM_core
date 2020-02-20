@@ -27,7 +27,7 @@ A **Cost-Effective Active Learning (CEAL)** algorithm is able to **interactively
 
 ## Import the SL/AL samples more informatively
 
-### v1. use SA anns, but not choose the top informative samples
+### v1. use SA anns, but not choose topK informative samples
 
 Don't change the label data, and incrementally import `K` SA_anns unlabel data
 

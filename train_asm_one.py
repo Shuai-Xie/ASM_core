@@ -19,20 +19,6 @@ import random
 import numpy as np
 
 
-def get_learning_tag():
-    tag = ''
-    if args.enable_al and args.enable_sl:
-        print('use sl and al samples')
-        tag = 'sa'
-    elif args.enable_al:
-        print('only use al samples')
-        tag = 'al'
-    elif args.enable_sl:
-        print('only using sl samples is not meaningful!')
-        tag = 'sl'
-    return tag
-
-
 def update_asm_dataloader(writer, epoch):
     """
     update asm_train_anns and dataloader
@@ -68,9 +54,9 @@ def update_asm_dataloader(writer, epoch):
     batch_anns_num = len(batch_sl_scores)
     cer_anns, uncer_anns, pre_gt_uncer_anns = [], [], []  # 更新当前轮 pre_gt_uncer_anns
     for i in range(batch_anns_num):
-        if batch_sl_scores[i] >= 0.75:  # 应该大一些更好
+        if batch_sl_scores[i] >= 0.5:  # 应该大一些更好
             cer_anns.append(batch_sa_anns[i])
-        if batch_sl_scores[i] <= 0.5:  # 标注得分越低，越需要 AL
+        if batch_sl_scores[i] <= 0.3:  # 标注得分越低，越需要 AL
             uncer_anns.append(batch_sa_anns[i])  # sa uncer
             pre_gt_uncer_anns.append(batch_unlabel_anns[i])  # gt uncer
 
@@ -109,7 +95,7 @@ def update_asm_dataloader(writer, epoch):
     return dataloader
 
 
-def train_model(dataloader, start_epoch, ap_shift_thre, asm=True):
+def train_model(dataloader, start_epoch, ap_range, ap_shift_thre, asm=True):
     if asm:
         dataloader = update_asm_dataloader(writer, epoch=start_epoch)
 
@@ -126,8 +112,8 @@ def train_model(dataloader, start_epoch, ap_shift_thre, asm=True):
         # states
         ap_records['ap_50'].append(evals['ap_50'])
         ap_records['ap_75'].append(evals['ap_75'])
-        if len(ap_records[args.ap]) >= args.ap_range:
-            ap_shift = lasso_shift(ap_records[args.ap][-args.ap_range:])
+        if len(ap_records[args.ap]) >= ap_range:
+            ap_shift = lasso_shift(ap_records[args.ap][-ap_range:])
         else:
             ap_shift = 0
         ap_records['ap_shift'].append(ap_shift)
@@ -138,17 +124,18 @@ def train_model(dataloader, start_epoch, ap_shift_thre, asm=True):
             ckpt_path = os.path.join(model_save_dir, '{}_epoch_{}.pth'.format(args.backbone, epoch))
             save_model(ckpt_path, model, epoch, optimizer)
 
-            if asm:
-                dataloader = update_asm_dataloader(writer, epoch)
-
             if 0 < ap_shift < ap_shift_thre:  # break and save ap records
-                best_idx_in_range = ap_records[args.ap].index(max(ap_records[args.ap][-args.ap_range:]))
-                best_epoch = epoch - args.ap_range + 1 + best_idx_in_range
+                best_idx_in_range = ap_records[args.ap].index(max(ap_records[args.ap][-ap_range:]))
+                best_epoch = epoch - ap_range + 1 + best_idx_in_range
                 # 从 ap_range 中选取最优 epoch
                 ap_records['ap_50'] = ap_records['ap_50'][:best_epoch + 1]
                 ap_records['ap_75'] = ap_records['ap_75'][:best_epoch + 1]
                 ap_records['ap_shift'] = ap_records['ap_shift'][:best_epoch + 1]
+                print('best epoch:', best_epoch)
                 return best_epoch
+
+            if asm:
+                dataloader = update_asm_dataloader(writer, epoch)
 
 
 if __name__ == '__main__':
@@ -167,28 +154,24 @@ if __name__ == '__main__':
     # early stop
     parser.add_argument('--ap', default='ap_50', type=str, help='ap_50, ap_75')
     parser.add_argument('--ap_thre', default=0.5, type=float, help='ap threshold to save ckpt')
-    parser.add_argument('--ap_range', default=3, type=int, help='ap range to get lasso ap_shfit')
-    parser.add_argument('--ap_shift_pretrain', default=0.05, type=float, help='ap_shift threshold to stop training')
+    parser.add_argument('--ap_range_pre', default=3, type=int, help='ap range to get lasso ap_shfit')
+    parser.add_argument('--ap_range_asm', default=5, type=int, help='ap range to get lasso ap_shfit')
+    parser.add_argument('--ap_shift_pre', default=0.05, type=float, help='ap_shift threshold to stop training')
     parser.add_argument('--ap_shift_asm', default=0.001, type=float, help='ap_shift threshold to stop training')
     # asm
     parser.add_argument('--certain_thre', default=0.8, type=float, help='threshold to keep sl samples')  # keep prob
     parser.add_argument('--uncertain_thre', default=0.3, type=float, help='threshold to keep al samples')  # [0.3]
     parser.add_argument('--K', default=400, type=int, help='add new unlabel samples each iter')
-    parser.add_argument('--enable_al', default=True, type=bool, help='whether to use al process')
-    parser.add_argument('--enable_sl', default=True, type=bool, help='whether to use sl process')
 
     params = [
         '--gpus', '1',
         '--backbone', 'res50',
         '--num_classes', '21',  # 20+bg
-        '--batch_size', '4',
+        '--batch_size', '1',
         '--check_step', '1',  # eval step
         # '--ckpt', 'output/res50_sa/res50_epoch_5.pth',
     ]
     args = parser.parse_args(params)
-
-    # tag
-    learning_tag = get_learning_tag()  # ['sa', 'al', 'sl']
 
     # gpu
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpus
@@ -223,14 +206,14 @@ if __name__ == '__main__':
     dataloader_train = torch.utils.data.DataLoader(dataset_train,
                                                    batch_size=args.batch_size,
                                                    shuffle=True,
-                                                   pin_memory=True,
+                                                   # pin_memory=True,
                                                    num_workers=4,
                                                    collate_fn=collate_fn)
     dataset_eval = VOC_Dataset(data=eval_anns, split=None, transforms=get_transform(False))
     dataloader_eval = torch.utils.data.DataLoader(dataset_eval,
                                                   batch_size=1,
                                                   shuffle=False,
-                                                  pin_memory=True,
+                                                  # pin_memory=True,
                                                   num_workers=4,
                                                   collate_fn=collate_fn)
     print('load dataset done!')
@@ -253,8 +236,8 @@ if __name__ == '__main__':
         # lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=0.1)  # 默认 -1
         # todo: 引入新 anns 应该带来 学习率的改变?
         lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.num_epoches)
-        best_epoch = train_model(dataloader_train, 0, args.ap_shift_pretrain, asm=False)  # 内部使用 lr_scheduler
+        best_epoch = train_model(dataloader_train, 0, args.ap_range_pre, args.ap_shift_pre, asm=False)
         start_epoch = best_epoch + 1
 
     print('asm begin epoch:', start_epoch)
-    train_model(dataloader_train, start_epoch, args.ap_shift_asm, asm=True)
+    train_model(dataloader_train, start_epoch, args.ap_range_asm, args.ap_shift_asm, asm=True)

@@ -2,6 +2,38 @@ import torchvision
 from torchvision.models.detection.faster_rcnn import FasterRCNN, FastRCNNPredictor, fasterrcnn_resnet50_fpn
 from torchvision.models.detection.rpn import AnchorGenerator
 
+"""
+MaskRCNN -> FasterRCNN -> GeneralizedRCNN (forward in here)
+
+forward():
+    backbone -> rpn -> roi_heads -> postprocess(recover box)
+    # rpn use RPN params
+    # roi_heads use Box and Mask params
+
+GeneralizedRCNN has forward(), son class hasn't
+if train:
+    input: images (list[Tensor]), target (list[Dict[Tensor]])
+    return: losses (dict[Tensor]) {'proposal_losses', 'detector_losses'}
+if test:
+    input: images (list[Tensor]), target = None
+    return: detections (list[BoxList])
+
+FasterRCNN(GeneralizedRCNN) -> fasterrcnn_resnet50_fpn
+    # RPN, Box
+if train:
+    input: images, target_dict {'boxes', 'labels'}
+    return: losses (dict[Tensor]) {'proposal_losses', 'detector_losses'}
+if test:
+    input: images (list[Tensor]), target = None
+    return: detections (list[BoxList])
+
+MaskRCNN(FasterRCNN) -> maskrcnn_resnet50_fpn
+    # RPN, Box, Mask
+if train:
+    input: images, target_dict { 'boxes', 'labels', 'masks' }
+    return: losses (dict[Tensor]) {'proposal_losses', 'detector_losses'}
+"""
+
 
 def faster_rcnn_mobile(input_size, num_classes, self_pretrained):
     if not self_pretrained:

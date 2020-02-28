@@ -87,7 +87,7 @@ def get_model(backbone, input_size, num_classes, self_pretrained=False):
     elif backbone == 'mobile':
         return faster_rcnn_mobile(input_size, num_classes, self_pretrained)
     else:
-        raise ValueError('no such backbone!')
+        raise ValueError('not implement such backbone!')
 
 
 def see_anchors():

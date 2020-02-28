@@ -61,6 +61,7 @@ class RandomHorizontalFlip:
         if random.random() < self.prob:
             height, width = img.size
             img = F.hflip(img)
+            # VOC 默认数据集的得处理下
             if target is not None:
                 if "boxes" in target:
                     bbox = target["boxes"]

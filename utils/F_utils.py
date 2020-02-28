@@ -23,14 +23,13 @@ def test_hflip(img):
 
 def test_transform():
     trans = get_transform(train=True)
-    tensor_to_pil = transforms.ToPILImage()
 
     demo_dir = '../data/demo'
     for img in os.listdir(demo_dir):
         img = Image.open(os.path.join(demo_dir, img))
         show_img(img)
         img, _ = trans(img, target=None)
-        img = tensor_to_pil(img)
+        img = F.to_pil_image(img)
         show_img(img)
 
 

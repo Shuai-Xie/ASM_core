@@ -1,10 +1,15 @@
 import torch
 from operator import mul
 from functools import reduce
+from torchsummary import summary
 
 
 def get_list_mul(li):
     return reduce(mul, li) if len(li) > 0 else 0
+
+
+def print_model_summary(model, input_size):
+    summary(model, input_size, device='cpu')
 
 
 def print_model_params(model):
@@ -57,18 +62,18 @@ def load_model(model, ckpt_path, optimizer=None):
     model.load_state_dict(ckpt['state_dict'])
     print('load {}, epoch {}'.format(ckpt_path, ckpt['epoch']))
 
+    best_epoch = ckpt.get('epoch', -1)
+    best_acc = ckpt.get('accuracy', 0)
+
     if optimizer is not None:
         if 'optimizer' in ckpt:
             optimizer.load_state_dict(ckpt['optimizer'])
-            start_epoch = ckpt['epoch'] + 1  # 从保存的 best_epoch 再开始
-        else:
-            start_epoch = 0
-        return model, optimizer, start_epoch
+        return model, optimizer, best_epoch, best_acc
     else:
         return model
 
 
-def save_model(ckpt_path, model, epoch, optimizer=None):
+def save_model(ckpt_path, model, epoch, accuracy, optimizer=None):
     # model = { 'epoch': , 'state_dict': , 'optimizer' }
     if isinstance(model, torch.nn.DataParallel):
         state_dict = model.module.state_dict()  # convert data_parallal to model
@@ -76,6 +81,7 @@ def save_model(ckpt_path, model, epoch, optimizer=None):
         state_dict = model.state_dict()
     ckpt = {
         'epoch': epoch,
+        'accuracy': accuracy,
         'state_dict': state_dict
     }
     if optimizer is not None:

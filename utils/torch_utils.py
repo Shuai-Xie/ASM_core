@@ -17,14 +17,6 @@ def get_cpu_threads():
     return n_threads
 
 
-def torch_where():
-    a = torch.tensor([1, 2, 3, 4])
-    b = a.where(a % 2 == 0, torch.tensor(0))  # 参数 other，表示不满足的元素填充值
-    c = torch.where(a % 2 == 0, a, torch.tensor(-1))
-    print(b)
-    print(c)
-
-
 def rand_tensor():
     # To increase the reproducibility of result, we often set the random seed to a specific value first.
     # 设置 seed，rand 结果可复现

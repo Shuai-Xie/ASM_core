@@ -23,6 +23,11 @@ def test_zip():
         print(a, b)
 
 
+def np_size():
+    a = np.random.rand(2, 3)
+    print(a.size)  # 所有元素数量
+
+
 def oranges():
     for x in range(11, 15):
         # 两个两个数多1个，三个三个数少1个

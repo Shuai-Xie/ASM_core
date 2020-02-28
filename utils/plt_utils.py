@@ -13,6 +13,23 @@ cNorm = mcolors.Normalize(vmin=0, vmax=num_class - 1)
 scalarMap = cmx.ScalarMappable(norm=cNorm, cmap=cmap)
 
 
+def plt_samples(imgs, labels, class2names, cols=5):
+    total_imgs = len(imgs)
+    rows = total_imgs // cols
+    rows = rows + 1 if total_imgs % cols > 0 else rows
+    f, axs = plt.subplots(nrows=rows, ncols=cols)
+    f.set_size_inches((cols * 1, rows * 1))  # w,h
+
+    for i in range(rows * cols):
+        ax = axs.flat[i]
+        ax.axis('off')
+        if i < total_imgs:
+            ax.imshow(imgs[i])
+            ax.set_title(class2names[labels[i]])
+
+    plt.show()
+
+
 def plt_bbox(img, boxes, labels, scores, class2names, send_web=False):
     plt.figure(figsize=(8, 6))
     # plt.xticks([])
